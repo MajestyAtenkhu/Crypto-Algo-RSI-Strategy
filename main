@@ -1,0 +1,53 @@
+class ModifiedRedHornet(QCAlgorithm):
+
+    def Initialize(self):
+        self.SetStartDate(2019, 1, 1)  # Set Start Date
+        self.SetEndDate(2021, 1, 1)    # Set End Date
+        self.SetCash(100)              # Set Strategy Cash
+        self.btc = self.AddCrypto("BTCUSDC", Resolution.Hour, Market.Kraken).Symbol
+        
+        self.SetBrokerageModel(BrokerageName.Kraken, AccountType.Cash)
+        self.rsi = self.RSI(self.btc, 14, MovingAverageType.Simple, Resolution.Hour)
+        self.rsiEntryThreshold = 30
+        self.rsiExitThreshold = 70
+        self.takeProfitPercent = 0.10
+        self.stopLossPercent = 0.05
+        self.initialStopRisk = 0.02  # 2% risk
+        self.atr = self.ATR(self.btc, 14, MovingAverageType.Simple, Resolution.Hour)
+        self.entryTicket = None
+        self.stopMarketTicket = None
+        self.takeProfitTicket = None
+
+    def OnData(self, data):
+        if not self.rsi.IsReady or not self.atr.IsReady or not self.btc in data:
+            return
+
+        holdings = self.Portfolio[self.btc].Quantity
+        price = data[self.btc].Close
+        atr_value = self.atr.Current.Value
+
+        if holdings <= 0:  # if we're not in the market
+            if self.rsi.Current.Value < self.rsiEntryThreshold:
+                quantity = self.CalculateOrderQuantity(self.btc, self.initialStopRisk)
+                self.entryTicket = self.MarketOrder(self.btc, quantity)
+                self.Debug("Purchased BTC at " + str(price))
+
+                # Calculate the stop price as a function of ATR and current price
+                stopPrice = price - (2 * atr_value)
+                takeProfitPrice = price + (2 * atr_value * 2)  # 2:1 Reward:Risk ratio
+
+                # Place a stop market order at our stop price, and a limit order at our take profit price
+                self.stopMarketTicket = self.StopMarketOrder(self.btc, -quantity, stopPrice)
+                self.takeProfitTicket = self.LimitOrder(self.btc, -quantity, takeProfitPrice)
+
+        else:  # manage the trade
+            if self.rsi.Current.Value > self.rsiExitThreshold:
+                self.Liquidate(self.btc, "RSI above exit threshold")
+                self.Debug("Sold BTC at " + str(price))
+                self.entryTicket = None
+                self.stopMarketTicket = None
+                self.takeProfitTicket = None
+
+    def OnOrderEvent(self, orderEvent):
+        # Log order events
+        self.Log(str(orderEvent))
